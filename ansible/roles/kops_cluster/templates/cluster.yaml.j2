@@ -1,0 +1,109 @@
+apiVersion: kops.k8s.io/v1alpha2
+kind: Cluster
+metadata:
+  name: {{ cluster_name }}
+spec:
+  kubernetesVersion: {{ kubernetes_version }}
+  cloudProvider: aws
+  networking:
+    {{ networking }}: {}
+  masterPublicName: "api.{{ cluster_name }}"
+  api:
+    loadBalancer:
+      type: Internal
+  subnets:
+  {% for id in private_subnets %}
+    - id: {{ id }}
+      type: Private
+      name: private-{{ loop.index }}
+  {% endfor %}
+  {% for id in public_subnets %}
+    - id: {{ id }}
+      type: Utility
+      name: utility-{{ loop.index }}
+  {% endfor %}
+  topology:
+    masters: private
+    nodes: private
+    bastion:
+      bastionPublicName: "bastion.{{ cluster_name }}"
+  etcdClusters:
+    - name: main
+      members:
+      - name: a
+        instanceGroup: master-ap-south-1a
+      - name: b
+        instanceGroup: master-ap-south-1b
+      - name: c
+        instanceGroup: master-ap-south-1c
+  iam:
+    allowContainerRegistry: true
+    useServiceAccountExternalPermissions: true   # IRSA
+  encryptionConfig:
+    enabled: true
+  serviceAccountIssuerDiscovery:
+    discoveryStore: s3://example-oidc-bucket
+    enableAWSOIDCProvider: true
+  additionalPolicies:
+    node: |
+      [
+        {
+          "Effect": "Allow",
+          "Action": ["kms:Decrypt","kms:Encrypt","kms:GenerateDataKey*"],
+          "Resource": "{{ kms_key_arn }}"
+        }
+      ]
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata: { name: master-ap-south-1a }
+spec:
+  role: Master
+  subnets: ["private-1"]
+  machineType: {{ instance_types.masters[0] }}
+  minSize: 1
+  maxSize: 1
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata: { name: master-ap-south-1b }
+spec:
+  role: Master
+  subnets: ["private-2"]
+  machineType: {{ instance_types.masters[0] }}
+  minSize: 1
+  maxSize: 1
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata: { name: master-ap-south-1c }
+spec:
+  role: Master
+  subnets: ["private-3"]
+  machineType: {{ instance_types.masters[0] }}
+  minSize: 1
+  maxSize: 1
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata: { name: nodes-ondemand }
+spec:
+  role: Node
+  subnets: ["private-1","private-2","private-3"]
+  machineType: {{ instance_types.workers_on_demand[0] }}
+  mixedInstancesPolicy: false
+  minSize: {{ desired_capacity.workers_on_demand }}
+  maxSize: {{ desired_capacity.workers_on_demand + 3 }}
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata: { name: nodes-spot }
+spec:
+  role: Node
+  subnets: ["private-1","private-2","private-3"]
+  machineType: {{ instance_types.workers_spot[0] }}
+  maxPrice: "0.30"
+  minSize: {{ desired_capacity.workers_spot }}
+  maxSize: {{ desired_capacity.workers_spot + 6 }}
+  mixedInstancesPolicy:
+    instances: {{ instance_types.workers_spot | to_json }}

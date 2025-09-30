@@ -1,0 +1,28 @@
+---
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Ensure required tools installed
+      ansible.builtin.package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - unzip
+        - curl
+
+    - name: Install kops
+      get_url:
+        url: https://github.com/kubernetes/kops/releases/download/v1.29.0/kops-linux-amd64
+        dest: /usr/local/bin/kops
+        mode: '0755'
+
+    - name: Install kubectl
+      get_url:
+        url: https://dl.k8s.io/release/v1.29.6/bin/linux/amd64/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+
+    - name: Install helm
+      get_url:
+        url: https://get.helm.sh/helm-v3.15.3-linux-amd64.tar.gz
+        dest: /tmp/helm.tar.gz

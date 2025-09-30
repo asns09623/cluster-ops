@@ -1,0 +1,84 @@
+{
+    "hosted_zone_id": {
+        "sensitive": false,
+        "type": "string",
+        "value": "Z091242923SULSJHAJOWB"
+    },
+    "hosted_zone_name": {
+        "sensitive": false,
+        "type": "string",
+        "value": "corp.dev.example.internal"
+    },
+    "irsa_role_arns": {
+        "sensitive": false,
+        "type": [
+            "object",
+            {
+                "alb_ctrl": "string",
+                "argocd_repo": "string",
+                "autoscaler": "string",
+                "cert_manager": "string",
+                "external_dns": "string"
+            }
+        ],
+        "value": {
+            "alb_ctrl": "arn:aws:iam::198549795675:role/kops-irsa-alb_ctrl",
+            "argocd_repo": "arn:aws:iam::198549795675:role/kops-irsa-argocd_repo",
+            "autoscaler": "arn:aws:iam::198549795675:role/kops-irsa-autoscaler",
+            "cert_manager": "arn:aws:iam::198549795675:role/kops-irsa-cert_manager",
+            "external_dns": "arn:aws:iam::198549795675:role/kops-irsa-external_dns"
+        }
+    },
+    "issuer_url": {
+        "sensitive": false,
+        "type": "string",
+        "value": "https://example-oidc-bucket.s3.ap-south-1.amazonaws.com/oidc"
+    },
+    "kms_key_arn": {
+        "sensitive": false,
+        "type": "string",
+        "value": "arn:aws:kms:ap-south-1:198549795675:key/3e4fe344-ad76-474b-9fd5-775f7bfcfb2d"
+    },
+    "oidc_provider_arn": {
+        "sensitive": false,
+        "type": "string",
+        "value": "arn:aws:iam::198549795675:oidc-provider/example-oidc-bucket.s3.ap-south-1.amazonaws.com/oidc"
+    },
+    "private_subnets": {
+        "sensitive": false,
+        "type": [
+            "tuple",
+            [
+                "string",
+                "string",
+                "string"
+            ]
+        ],
+        "value": [
+            "subnet-00ad8b4faeed65699",
+            "subnet-0b190c5f5922e2ef9",
+            "subnet-02b1b60ec1554c3ba"
+        ]
+    },
+    "public_subnets": {
+        "sensitive": false,
+        "type": [
+            "tuple",
+            [
+                "string",
+                "string",
+                "string"
+            ]
+        ],
+        "value": [
+            "subnet-0caadc9d32b00e2b6",
+            "subnet-0ef0b940a0871a01c",
+            "subnet-0560f9bf1ac2ef805"
+        ]
+    },
+    "vpc_id": {
+        "sensitive": false,
+        "type": "string",
+        "value": "vpc-0a621bd1c28597dc7"
+    }
+}

@@ -1,0 +1,51 @@
+- name: Check if cluster exists
+  environment:
+    KOPS_STATE_STORE: "{{ state_store }}"
+  command: kops get cluster "{{ cluster_name }}"
+  register: kops_get
+  changed_when: false
+  failed_when: false
+
+- name: Create cluster manifest (fixed & safe argv) only when missing
+  when: kops_get.rc != 0
+  environment:
+    KOPS_STATE_STORE: "{{ state_store }}"
+  command: ""
+  args:
+    argv:
+      - kops
+      - create
+      - cluster
+      - --name
+      - "{{ cluster_name }}"
+      - --state
+      - "{{ state_store }}"
+      - --zones
+      - "ap-south-1a,ap-south-1b,ap-south-1c"
+      - --node-count
+      - "3"
+      - --node-size
+      - "t3.large"
+      - --control-plane-size
+      - "t3.medium"
+      - --control-plane-count
+      - "3"
+      - --network-id
+      - "{{ vpc_id }}"
+      - --subnets
+      - "{{ private_subnets | join(',') }}"
+      - --utility-subnets
+      - "{{ public_subnets | join(',') }}"
+      - --networking
+      - calico
+      - --topology
+      - private
+      - --bastion
+      - --dns
+      - private
+      - --dns-zone
+      - "{{ hosted_zone_name }}"   # e.g. corp.dev.example.internal
+      - --encrypt-etcd-storage
+      - --discovery-store
+      - "{{ state_store }}/oidc"
+      - --yes

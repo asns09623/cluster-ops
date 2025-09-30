@@ -1,0 +1,117 @@
+apiVersion: kops.k8s.io/v1alpha2
+kind: Cluster
+metadata:
+  name: corp.dev.example.internal
+spec:
+  kubernetesVersion: 1.28.10
+  cloudProvider: aws
+  networking:
+    calico: {}
+  masterPublicName: "api.corp.dev.example.internal"
+  api:
+    loadBalancer:
+      type: Internal
+  subnets:
+      - id: subnet-00ad8b4faeed65699
+      type: Private
+      name: private-1
+      - id: subnet-0b190c5f5922e2ef9
+      type: Private
+      name: private-2
+      - id: subnet-02b1b60ec1554c3ba
+      type: Private
+      name: private-3
+        - id: subnet-0caadc9d32b00e2b6
+      type: Utility
+      name: utility-1
+      - id: subnet-0ef0b940a0871a01c
+      type: Utility
+      name: utility-2
+      - id: subnet-0560f9bf1ac2ef805
+      type: Utility
+      name: utility-3
+    topology:
+    masters: private
+    nodes: private
+    bastion:
+      bastionPublicName: "bastion.corp.dev.example.internal"
+  etcdClusters:
+    - name: main
+      members:
+      - name: a
+        instanceGroup: master-ap-south-1a
+      - name: b
+        instanceGroup: master-ap-south-1b
+      - name: c
+        instanceGroup: master-ap-south-1c
+  iam:
+    allowContainerRegistry: true
+    useServiceAccountExternalPermissions: true   # IRSA
+  encryptionConfig:
+    enabled: true
+  serviceAccountIssuerDiscovery:
+    discoveryStore: "s3://example-oidc-bucket"
+    enableAWSOIDCProvider: true
+  additionalPolicies:
+    node: |
+      [
+        {
+          "Effect": "Allow",
+          "Action": ["kms:Decrypt","kms:Encrypt","kms:GenerateDataKey*"],
+          "Resource": "arn:aws:kms:ap-south-1:198549795675:key/3e4fe344-ad76-474b-9fd5-775f7bfcfb2d"
+        }
+      ]
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata: { name: master-ap-south-1a }
+spec:
+  role: Master
+  subnets: ["private-1"]
+  machineType: m6i.large
+  minSize: 1
+  maxSize: 1
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata: { name: master-ap-south-1b }
+spec:
+  role: Master
+  subnets: ["private-2"]
+  machineType: m6i.large
+  minSize: 1
+  maxSize: 1
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata: { name: master-ap-south-1c }
+spec:
+  role: Master
+  subnets: ["private-3"]
+  machineType: m6i.large
+  minSize: 1
+  maxSize: 1
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata: { name: nodes-ondemand }
+spec:
+  role: Node
+  subnets: ["private-1","private-2","private-3"]
+  machineType: m6i.large
+  mixedInstancesPolicy: false
+  minSize: 1
+  maxSize: 4
+---
+apiVersion: kops.k8s.io/v1alpha2
+kind: InstanceGroup
+metadata: { name: nodes-spot }
+spec:
+  role: Node
+  subnets: ["private-1","private-2","private-3"]
+  machineType: m6i.large
+  maxPrice: "0.30"
+  minSize: 2
+  maxSize: 8
+  mixedInstancesPolicy:
+    instances: ["m6i.large", "c6i.large"]

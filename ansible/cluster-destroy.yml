@@ -1,0 +1,6 @@
+---
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Destroy cluster
+      command: kops delete cluster --name {{ cluster_name }} --state {{ state_store }} --yes

@@ -1,0 +1,6 @@
+---
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Rolling upgrade
+      command: kops rolling-update cluster --name {{ cluster_name }} --state {{ state_store }} --yes

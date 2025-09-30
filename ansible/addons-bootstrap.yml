@@ -1,0 +1,236 @@
+---
+- name: Setup public bastion and install addons from it
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # ----- region / networking -----
+    aws_region: ap-south-1
+    vpc_id: "vpc-0a621bd1c28597dc7"
+    public_subnets:
+      - "subnet-0caadc9d32b00e2b6"
+      - "subnet-0ef0b940a0871a01c"
+      - "subnet-0560f9bf1ac2ef805"
+
+    # ----- kOps / cluster -----
+    state_store: "s3://example-oidc-bucket"
+    cluster_name: "corp.dev.example.internal"
+    hosted_zone_name: "corp.dev.example.internal"
+
+    # ----- IRSA roles -----
+    irsa_role_arns:
+      autoscaler:   "arn:aws:iam::198549795675:role/kops-irsa-autoscaler"
+      alb_ctrl:     "arn:aws:iam::198549795675:role/kops-irsa-alb_ctrl"
+      external_dns: "arn:aws:iam::198549795675:role/kops-irsa-external_dns"
+      cert_manager: "arn:aws:iam::198549795675:role/kops-irsa-cert_manager"
+      argocd_repo:  "arn:aws:iam::198549795675:role/kops-irsa-argocd_repo"
+
+    # ----- bastion EC2 -----
+    bastion_name: "kops-bastion-{{ cluster_name }}"
+    instance_type: "t3.micro"
+    key_name: "kops-keypair"  # Ensure this matches the key pair created in AWS
+    admin_cidr: "0.0.0.0/0"   # tighten to your office IP/CIDR
+    bastion_sg_name: "kops-public-bastion-{{ cluster_name }}"
+    bastion_tags:
+      Name: "{{ bastion_name }}"
+      KubernetesCluster: "{{ cluster_name }}"
+      Role: "bastion"
+
+  collections:
+    - amazon.aws
+
+  tasks:
+    - name: Pick a public subnet for the bastion (first one)
+      set_fact:
+        bastion_subnet_id: "{{ public_subnets | first }}"
+
+    - name: Ensure security group for bastion exists
+      amazon.aws.ec2_security_group:
+        name: "{{ bastion_sg_name }}"
+        description: "SSH bastion for {{ cluster_name }}"
+        vpc_id: "{{ vpc_id }}"
+        region: "{{ aws_region }}"
+        rules:
+          - proto: tcp
+            ports: [22]
+            cidr_ip: "{{ admin_cidr }}"
+        rules_egress:
+          - proto: -1
+            cidr_ip: "0.0.0.0/0"
+        tags: "{{ bastion_tags }}"
+      register: bastion_sg
+
+    - name: Lookup latest Amazon Linux 2023 AMI
+      amazon.aws.ec2_ami_info:
+        owners: ["amazon"]
+        region: "{{ aws_region }}"
+        filters:
+          name: "al2023-ami-*-x86_64"
+          architecture: "x86_64"
+          root-device-type: "ebs"
+          virtualization-type: "hvm"
+      register: ami_info
+
+    - name: Choose most recent AMI
+      set_fact:
+        bastion_ami: "{{ (ami_info.images | sort(attribute='creation_date')) | last | default({}) }}"
+      failed_when: bastion_ami.image_id is not defined
+
+    - name: Ensure public bastion exists
+      amazon.aws.ec2_instance:
+        name: "{{ bastion_name }}"
+        key_name: "{{ key_name }}"
+        instance_type: "{{ instance_type }}"
+        image_id: "{{ bastion_ami.image_id }}"
+        region: "{{ aws_region }}"
+        network:
+          assign_public_ip: true
+          subnet_id: "{{ bastion_subnet_id }}"
+          security_group_ids: ["{{ bastion_sg.group_id }}"]
+        tags: "{{ bastion_tags }}"
+        wait: true
+      register: bastion_ec2
+
+    - name: Extract bastion public IP / DNS
+      set_fact:
+        bastion_public_ip: "{{ bastion_ec2.instances[0].public_ip_address }}"
+        bastion_public_dns: "{{ bastion_ec2.instances[0].public_dns_name }}"
+        bastion_user: "ec2-user"
+
+    - name: Add bastion to in-memory inventory
+      add_host:
+        name: bastion
+        ansible_host: "{{ bastion_public_ip }}"
+        ansible_user: "{{ bastion_user }}"
+        ansible_ssh_private_key_file: "{{ lookup('env','ANSIBLE_PRIVATE_KEY_FILE') | default('', true) or omit }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+
+    - name: Wait for SSH on bastion
+      wait_for:
+        host: "{{ bastion_public_ip }}"
+        port: 22
+        timeout: 600
+      delegate_to: localhost
+
+    # ---------- Install base CLIs on bastion ----------
+    - name: Install CLI deps on bastion (kubectl, helm, kops)
+      become: true
+      shell: |
+        set -euxo pipefail
+        dnf -y install tar gzip unzip
+
+        # Ensure FULL curl is installed
+        if ! rpm -q curl >/dev/null 2>&1; then
+          dnf -y install --allowerasing curl
+        fi
+
+        # kubectl
+        if ! command -v kubectl >/dev/null; then
+          curl -LO https://dl.k8s.io/release/v1.29.7/bin/linux/amd64/kubectl
+          install -m 0755 kubectl /usr/local/bin/kubectl
+          rm -f kubectl
+        fi
+
+        # helm
+        if ! command -v helm >/dev/null; then
+          curl -sSL https://get.helm.sh/helm-v3.15.3-linux-amd64.tar.gz -o /tmp/helm.tgz
+          tar -xzf /tmp/helm.tgz -C /tmp
+          install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          rm -rf /tmp/linux-amd64 /tmp/helm.tgz
+        fi
+
+        # kops
+        if ! command -v kops >/dev/null; then
+          curl -LO https://github.com/kubernetes/kops/releases/download/v1.29.2/kops-linux-amd64
+          install -m 0755 kops-linux-amd64 /usr/local/bin/kops
+          rm -f kops-linux-amd64
+        fi
+      args:
+        executable: /bin/bash
+      delegate_to: bastion
+
+    # ---------- kOps export + validate ----------
+    - name: Export kubeconfig (admin) on bastion
+      command: >
+        kops export kubecfg {{ cluster_name }} --admin
+      environment:
+        KOPS_STATE_STORE: "{{ state_store }}"
+        AWS_ACCESS_KEY_ID: ""
+        AWS_SECRET_ACCESS_KEY: ""
+      delegate_to: bastion
+      changed_when: false
+
+    - name: Wait for cluster to validate (up to 15m) on bastion
+      command: >
+        kops validate cluster --name {{ cluster_name }} --wait 15m
+      environment:
+        KOPS_STATE_STORE: "{{ state_store }}"
+        AWS_ACCESS_KEY_ID: ""  # add access key if not using in instance role
+        AWS_SECRET_ACCESS_KEY: "" # add secret key if not using in instance role
+      delegate_to: bastion
+      register: kops_validate
+      failed_when: kops_validate.rc != 0
+
+    # ---------- Addons ----------
+    - name: Install Metrics Server
+      command: >
+        kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml --validate=false
+      delegate_to: bastion
+
+    - name: Add/Update Helm repos
+      delegate_to: bastion
+      block:
+        - command: helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+        - command: helm repo add eks https://aws.github.io/eks-charts
+        - command: helm repo add bitnami https://charts.bitnami.com/bitnami
+        - command: helm repo add jetstack https://charts.jetstack.io
+        - command: helm repo update
+
+    - name: Install/upgrade Cluster Autoscaler (IRSA)
+      command: >
+        helm upgrade --install cluster-autoscaler
+        oci://registry.k8s.io/autoscaling/cluster-autoscaler-chart
+        -n kube-system --create-namespace
+        --version 9.27.0  # Specify a valid chart version
+        --set rbac.serviceAccount.annotations."eks\.amazonaws\.com/role-arn"={{ irsa_role_arns.autoscaler }}
+        --set autoDiscovery.clusterName={{ cluster_name }}
+        --set awsRegion={{ aws_region }}
+      delegate_to: bastion
+
+    - name: Install/upgrade NGINX Ingress Controller
+      command: >
+        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx
+        -n ingress-nginx --create-namespace
+        --set controller.watchIngressWithoutClass=true
+      delegate_to: bastion
+
+    - name: Install/upgrade AWS Load Balancer Controller (IRSA)
+      command: >
+        helm upgrade --install aws-lbc eks/aws-load-balancer-controller
+        -n kube-system
+        --set clusterName={{ cluster_name }}
+        --set region={{ aws_region }}
+        --set vpcId={{ vpc_id }}
+        --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"={{ irsa_role_arns.alb_ctrl }}
+      delegate_to: bastion
+
+    - name: Install/upgrade external-dns (IRSA)
+      command: >
+        helm upgrade --install external-dns bitnami/external-dns
+        -n kube-system
+        --set provider=aws
+        --set policy=upsert-only
+        --set registry=txt
+        --set txtOwnerId={{ cluster_name }}
+        --set zoneType=private
+        --set domainFilters[0]={{ hosted_zone_name }}
+        --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"={{ irsa_role_arns.external_dns }}
+      delegate_to: bastion
+
+    - name: Install/upgrade cert-manager (IRSA)
+      command: >
+        helm upgrade --install cert-manager jetstack/cert-manager
+        -n cert-manager --create-namespace
+        --set installCRDs=true
+        --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"={{ irsa_role_arns.cert_manager }}
+      delegate_to: bastion

@@ -1,0 +1,26 @@
+- name: Ensure kops, kubectl, helm, argocd CLIs present
+  block:
+    - name: Install kubectl (if missing)
+      command: bash -lc 'command -v kubectl || (curl -sLo kubectl https://dl.k8s.io/release/v1.28.10/bin/linux/amd64/kubectl && chmod +x kubectl && sudo mv kubectl /usr/local/bin/)'
+
+    - name: Install kops (if missing or invalid)
+      command: bash -lc '
+        if ! command -v kops || ! file /usr/local/bin/kops | grep -q "ELF"; then
+          curl -sL https://github.com/kubernetes/kops/releases/download/v1.28.7/kops-linux-amd64 -o kops &&
+          chmod +x kops &&
+          sudo mv kops /usr/local/bin/ &&
+          if ! /usr/local/bin/kops version >/dev/null 2>&1; then
+            echo "Invalid kops binary, re-downloading..." &&
+            sudo rm -f /usr/local/bin/kops &&
+            curl -sL https://github.com/kubernetes/kops/releases/download/v1.28.7/kops-linux-amd64 -o kops &&
+            chmod +x kops &&
+            sudo mv kops /usr/local/bin/
+          fi
+        fi
+      '
+
+    - name: Install helm (if missing)
+      command: bash -lc 'command -v helm || (curl -s https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash)'
+
+    - name: Install argocd (if missing)
+      command: bash -lc 'command -v argocd || (curl -sLo argocd https://github.com/argoproj/argo-cd/releases/download/v2.11.7/argocd-linux-amd64 && chmod +x argocd && sudo mv argocd /usr/local/bin/)'
